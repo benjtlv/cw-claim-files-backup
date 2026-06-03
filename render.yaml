@@ -1,0 +1,39 @@
+# Render Blueprint -- scheduled backup of the Claim Files storage bucket.
+#
+# Defines a Cron Job that runs scripts/backup-claims-sync.py every 6 hours,
+# copying any new or changed files from the live "Claim Files" bucket (main
+# Supabase project) into a same-named "Claim Files" bucket of the backup Supabase
+# project. The sync is additive only: it never deletes from the backup.
+#
+# Setup:
+#   1. In Render: New > Blueprint, point it at this repo. Render reads this file.
+#   2. Fill in the four `sync: false` secrets below (service role keys + URLs)
+#      in the Render dashboard. They are NOT stored in git.
+#   3. The job then runs automatically on the schedule. You can also trigger an
+#      ad-hoc run from the Render dashboard ("Trigger Run").
+#
+# Schedule "0 */6 * * *" = 00:00, 06:00, 12:00, 18:00 UTC daily.
+
+services:
+  - type: cron
+    name: claim-files-backup-sync
+    runtime: python
+    schedule: "0 */6 * * *"
+    buildCommand: pip install -r scripts/requirements.txt
+    startCommand: python scripts/backup-claims-sync.py --execute
+    envVars:
+      # --- Source: the live (main) Supabase project. Read-only. ---
+      - key: SOURCE_SUPABASE_URL
+        sync: false   # e.g. https://upbbqaqnegncoetxuhwk.supabase.co
+      - key: SOURCE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false   # service role key for the SOURCE project
+      - key: SOURCE_BUCKET
+        value: "Claim Files"
+
+      # --- Backup: the other Supabase project. Written to. ---
+      - key: BACKUP_SUPABASE_URL
+        sync: false   # e.g. https://<backup-ref>.supabase.co
+      - key: BACKUP_SUPABASE_SERVICE_ROLE_KEY
+        sync: false   # service role key for the BACKUP project
+      - key: BACKUP_BUCKET
+        value: "Claim Files"
