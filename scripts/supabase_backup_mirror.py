@@ -218,20 +218,38 @@ class StorageClient:
 
     # -- bucket -------------------------------------------------------------
 
-    def get_bucket(self) -> Optional[dict]:
-        """Return the bucket's config dict, or None if it does not exist."""
+    def get_bucket(self, quiet: bool = False) -> Optional[dict]:
+        """Return the bucket's config dict, or None if it does not exist.
+
+        `quiet` suppresses the diagnostic line -- use it where a missing bucket
+        is an expected, handled outcome (ensure_bucket). Everywhere else the
+        reason matters: a rejected key and a missing bucket both land here, and
+        conflating them once hid a three-month backup outage behind a
+        "bucket not found" message.
+        """
         enc = quote(self.bucket, safe="")
         try:
             resp = self.session.get(
                 f"{self.base_url}/storage/v1/bucket/{enc}", timeout=REQUEST_TIMEOUT
             )
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            if not quiet:
+                self.log.error(
+                    f"  [{self.label}] GET bucket '{self.bucket}' failed to connect: {exc}"
+                )
             return None
-        return resp.json() if resp.ok else None
+        if resp.ok:
+            return resp.json()
+        if not quiet:
+            self.log.error(
+                f"  [{self.label}] GET bucket '{self.bucket}' -> "
+                f"{resp.status_code} {resp.reason}: {resp.text[:300]}"
+            )
+        return None
 
     def ensure_bucket(self, dry_run: bool, file_size_limit=None) -> str:
         """Create the bucket (private) if it does not already exist. Idempotent."""
-        if self.get_bucket() is not None:
+        if self.get_bucket(quiet=True) is not None:
             return "exists"
         if dry_run:
             return "would-create"
@@ -531,7 +549,11 @@ def run_mirror(args, mode_label: str, logger: logging.Logger) -> int:
     # everything the source can.
     src_cfg = source.get_bucket()
     if src_cfg is None:
-        logger.error(f"Source bucket '{args.source_bucket}' not found or unreachable.")
+        logger.error(
+            f"Source bucket '{args.source_bucket}' could not be read (see the line above). "
+            f"A 400/401/403 means the source credentials were rejected -- check "
+            f"$SOURCE_SUPABASE_SERVICE_ROLE_KEY; a 404 means the bucket name is wrong."
+        )
         return 1
     src_limit = src_cfg.get("file_size_limit")
 
